@@ -224,7 +224,14 @@ void httpServer_run(uint8_t seqnum)
 #ifdef _HTTPSERVER_DEBUG_
 		printf("> HTTPSocket[%d] : ClOSE_WAIT\r\n", s);	// if a peer requests to close the current connection
 #endif
-			disconnect(s);
+      // reset HTTPSock_Status
+      // this is needed because curl closes the socket
+      HTTPSock_Status[seqnum].file_len = 0;
+      HTTPSock_Status[seqnum].file_offset = 0;
+      HTTPSock_Status[seqnum].file_start = 0;
+      HTTPSock_Status[seqnum].sock_status = STATE_HTTP_IDLE;
+
+      disconnect(s);
 			break;
 
 		case SOCK_CLOSED:
@@ -519,6 +526,7 @@ static void http_process_handler(uint8_t s, st_http_request * p_http_request)
 			if (!strcmp((char *)uri_name, "/")) strcpy((char *)uri_name, INITIAL_WEBPAGE);	// If URI is "/", respond by index.html
 			if (!strcmp((char *)uri_name, "m")) strcpy((char *)uri_name, M_INITIAL_WEBPAGE);
 			if (!strcmp((char *)uri_name, "mobile")) strcpy((char *)uri_name, MOBILE_INITIAL_WEBPAGE);
+
 			find_http_uri_type(&p_http_request->TYPE, uri_name);	// Checking requested file types (HTML, TEXT, GIF, JPEG and Etc. are included)
 
 #ifdef _HTTPSERVER_DEBUG_
@@ -547,6 +555,11 @@ static void http_process_handler(uint8_t s, st_http_request * p_http_request)
 					content_found = 1; // Web content found in code flash memory
 					content_addr = (uint32_t)content_num;
 					HTTPSock_Status[get_seqnum].storage_type = CODEFLASH;
+				}
+				else if (find_userReg_api(uri_buf, &content_num, &file_len)) {
+				  content_found = 1;
+          HTTPSock_Status[get_seqnum].storage_type = NONE;
+          p_http_request->TYPE = PTYPE_HTML;
 				}
 				// Not CGI request, Web content in 'SD card' or 'Data flash' requested
 #ifdef _USE_SDCARD_
@@ -678,9 +691,32 @@ void reg_httpServer_webContent(uint8_t * content_name, uint8_t * content)
 	web_content[total_content_cnt].content_name = malloc(name_len+1);
 	strcpy((char *)web_content[total_content_cnt].content_name, (const char *)content_name);
 	web_content[total_content_cnt].content_len = content_len;
-	web_content[total_content_cnt].content = content;
+  web_content[total_content_cnt].content = content;
+  web_content[total_content_cnt].function = NULL;
 
 	total_content_cnt++;
+}
+
+void reg_httpServer_api(uint8_t * content_name, void(*fn)(void)) {
+  uint16_t name_len;
+
+  if(content_name == NULL)
+  {
+    return;
+  }
+  else if(total_content_cnt >= MAX_CONTENT_CALLBACK)
+  {
+    return;
+  }
+
+  name_len = strlen((char *)content_name);
+
+  web_content[total_content_cnt].content_name = malloc(name_len+1);
+  strcpy((char *)web_content[total_content_cnt].content_name, (const char *)content_name);
+  web_content[total_content_cnt].content_len = 0;
+  web_content[total_content_cnt].function = fn;
+
+  total_content_cnt++;
 }
 
 uint8_t display_reg_webContent_list(void)
@@ -719,7 +755,7 @@ uint8_t find_userReg_webContent(uint8_t * content_name, uint16_t * content_num, 
 
 	for(i = 0; i < total_content_cnt; i++)
 	{
-		if(!strcmp((char *)content_name, (char *)web_content[i].content_name))
+		if(!strcmp((char *)content_name, (char *)web_content[i].content_name) && web_content[i].function == NULL)
 		{
 			*file_len = web_content[i].content_len;
 			*content_num = i;
@@ -728,6 +764,26 @@ uint8_t find_userReg_webContent(uint8_t * content_name, uint16_t * content_num, 
 		}
 	}
 	return ret;
+}
+
+uint8_t find_userReg_api(uint8_t * content_name, uint16_t * content_num, uint32_t * file_len) {
+  uint16_t i;
+  uint8_t ret = 0; // '0' means 'File Not Found'
+
+  for(i = 0; i < total_content_cnt; i++)
+  {
+    if(!strcmp((char *)content_name, (char *)web_content[i].content_name))
+    {
+      *file_len = web_content[i].content_len;
+      *content_num = i;
+      ret = 1; // If the requested content found, ret set to '1' (Found)
+
+      // execute API function
+      web_content[i].function();
+      break;
+    }
+  }
+  return ret;
 }
 
 

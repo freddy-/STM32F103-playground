@@ -241,6 +241,14 @@ void W5500Init() {
 
     wizchip_setnetinfo(&net_info);
 }
+
+void led_on() {
+  HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
+}
+
+void led_off() {
+  HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);
+}
 /* W5500 */
 
 /* USER CODE END 0 */
@@ -291,13 +299,15 @@ int main(void)
 
   W5500Init();
   httpServer_init(TX_BUF, RX_BUF, MAX_HTTPSOCK, socknumlist);
-  reg_httpServer_cbfunc(NVIC_SystemReset, NULL); // remover
+  //reg_httpServer_cbfunc(NVIC_SystemReset, NULL); // remover
 
   /* Web content registration */
   reg_httpServer_webContent((uint8_t *)"index.html", (uint8_t *)index_page);
 
-  // verificar a necessidade disso
-  //HAL_GPIO_WritePin(W5500_CS_GPIO_Port, W5500_CS_Pin, GPIO_PIN_RESET);
+  /* Register function to respond to API call */
+  reg_httpServer_api((uint8_t *)"api/led/on", led_on);
+  reg_httpServer_api((uint8_t *)"api/led/off", led_off);
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -561,13 +571,17 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);
+
+  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(W5500_CS_GPIO_Port, W5500_CS_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pin : PC13 */
-  GPIO_InitStruct.Pin = GPIO_PIN_13;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  /*Configure GPIO pin : LED_Pin */
+  GPIO_InitStruct.Pin = LED_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(LED_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : W5500_CS_Pin */
   GPIO_InitStruct.Pin = W5500_CS_Pin;
