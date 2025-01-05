@@ -23,8 +23,21 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "stdio.h"
+
+/* SSD1306 */
 #include "ssd1306.h"
 #include "ssd1306_fonts.h"
+/* SSD1306 */
+
+/* W5500 */
+#include <string.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include "socket.h"
+#include "dhcp.h"
+#include "httpServer.h"
+/* W5500 */
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -44,6 +57,8 @@
 /* Private variables ---------------------------------------------------------*/
 I2C_HandleTypeDef hi2c1;
 
+SPI_HandleTypeDef hspi1;
+
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 
@@ -57,12 +72,15 @@ static void MX_GPIO_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
+static void MX_SPI1_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+/* ROTARY ENCODER */
 #define MAX_VALUE      100
 #define TICKS_PER_STEP 4 // each step of the encoder sends 4 events
 
@@ -79,6 +97,151 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
     __HAL_TIM_SET_COUNTER(htim, encoderValue * TICKS_PER_STEP);
   }
 }
+/* ROTARY ENCODER */
+
+
+/* W5500 */
+#define DHCP_SOCKET     0
+#define DNS_SOCKET      1
+#define MAX_HTTPSOCK    6
+#define index_page "<!DOCTYPE html>"\
+  "<html>"\
+    "<head>"\
+      "<title>W5500-STM32 Web Server</title>"\
+      "<meta http-equiv='Content-Type' content='text/html; charset=utf-8'>"\
+      "<link href=\"data:image/x-icon;base64,A\" rel=\"icon\" type=\"image/x-icon\">"\
+      "<style>"\
+        "html {display: inline-block; margin: 0px auto; text-align: center;}"\
+        "body{margin-top: 50px;}"\
+        ".button {display: block;"\
+          "width: 70px;"\
+          "background-color: #008000;"\
+          "border: none;"\
+          "color: white;"\
+          "padding: 14px 28px;"\
+          "text-decoration: none;"\
+          "font-size: 24px;"\
+          "margin: 0px auto 36px;"\
+          "border-radius: 5px;}"\
+        ".button-on {background-color: #008000;}"\
+        ".button-on:active{background-color: #008000;}"\
+        ".button-off {background-color: #808080;}"\
+        ".button-off:active {background-color: #808080;}"\
+        "p {font-size: 20px;color: #808080;margin-bottom: 20px;}"\
+      "</style>"\
+    "</head>"\
+    "<body>"\
+      "<h1>STM32 - W5500</h1>"\
+      "<p>Control the light via Ethernet</p>"\
+      "<a class=\"button button-on\" href=\"/ledon.html\">ON</a>"\
+      "<a class=\"button button-off\" href=\"/ledoff.html\">OFF</a>"\
+    "</body>"\
+  "</html>"
+
+uint8_t socknumlist[] = {2, 3, 4, 5, 6, 7};
+uint8_t RX_BUF[1024];
+uint8_t TX_BUF[1024];
+wiz_NetInfo net_info = {
+    .mac  = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED },
+    .dhcp = NETINFO_DHCP
+};
+
+void wizchipSelect(void) {
+    HAL_GPIO_WritePin(W5500_CS_GPIO_Port, W5500_CS_Pin, GPIO_PIN_RESET);
+}
+
+void wizchipUnselect(void) {
+    HAL_GPIO_WritePin(W5500_CS_GPIO_Port, W5500_CS_Pin, GPIO_PIN_SET);
+}
+
+void wizchipReadBurst(uint8_t* buff, uint16_t len) {
+    HAL_SPI_Receive(&hspi1, buff, len, HAL_MAX_DELAY);
+}
+
+void wizchipWriteBurst(uint8_t* buff, uint16_t len) {
+    HAL_SPI_Transmit(&hspi1, buff, len, HAL_MAX_DELAY);
+}
+
+uint8_t wizchipReadByte(void) {
+    uint8_t byte;
+    wizchipReadBurst(&byte, sizeof(byte));
+    return byte;
+}
+
+void wizchipWriteByte(uint8_t byte) {
+    wizchipWriteBurst(&byte, sizeof(byte));
+}
+
+volatile bool ip_assigned = false;
+
+void Callback_IPAssigned(void) {
+    ip_assigned = true;
+}
+
+void Callback_IPConflict(void) {
+    ip_assigned = false;
+}
+
+uint8_t dhcp_buffer[1024];
+uint8_t dns_buffer[1024];
+
+void W5500Init() {
+    // Register W5500 callbacks
+    reg_wizchip_cs_cbfunc(wizchipSelect, wizchipUnselect);
+    reg_wizchip_spi_cbfunc(wizchipReadByte, wizchipWriteByte);
+    reg_wizchip_spiburst_cbfunc(wizchipReadBurst, wizchipWriteBurst);
+
+    uint8_t rx_tx_buff_sizes[] = {2, 2, 2, 2, 2, 2, 2, 2};
+    wizchip_init(rx_tx_buff_sizes, rx_tx_buff_sizes);
+
+    // set MAC address before using DHCP
+    setSHAR(net_info.mac);
+    DHCP_init(DHCP_SOCKET, dhcp_buffer);
+
+    reg_dhcp_cbfunc(
+        Callback_IPAssigned,
+        Callback_IPAssigned,
+        Callback_IPConflict
+    );
+
+    ssd1306_SetCursor(0, 12);
+    ssd1306_WriteString("Waiting IP", Font_7x10, White);
+    ssd1306_UpdateScreen();
+
+    uint32_t ctr = 10000;
+    while((!ip_assigned) && (ctr > 0)) {
+      ssd1306_SetCursor(72, 12);
+      if (ctr % 2 == 0) {
+        ssd1306_WriteString("   ", Font_7x10, White);
+      } else {
+        ssd1306_WriteString("...", Font_7x10, White);
+      }
+      ssd1306_UpdateScreen();
+      DHCP_run();
+      HAL_Delay(500);
+      ctr--;
+    }
+
+    if(!ip_assigned) {
+      ssd1306_SetCursor(0, 12);
+      ssd1306_WriteString("IP not assigned", Font_7x10, White);
+      ssd1306_UpdateScreen();
+      return;
+    }
+
+    getIPfromDHCP(net_info.ip);
+    getGWfromDHCP(net_info.gw);
+    getSNfromDHCP(net_info.sn);
+
+    char ipStr[30];
+    sprintf(ipStr, "IP: %d.%d.%d.%d", net_info.ip[0], net_info.ip[1], net_info.ip[2], net_info.ip[3]);
+    ssd1306_SetCursor(0, 12);
+    ssd1306_WriteString(ipStr, Font_7x10, White);
+    ssd1306_UpdateScreen();
+
+    wizchip_setnetinfo(&net_info);
+}
+/* W5500 */
 
 /* USER CODE END 0 */
 
@@ -113,6 +276,7 @@ int main(void)
   MX_I2C1_Init();
   MX_TIM2_Init();
   MX_TIM3_Init();
+  MX_SPI1_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_Encoder_Start_IT(&htim2, TIM_CHANNEL_ALL);
   ssd1306_Init();
@@ -123,8 +287,17 @@ int main(void)
   ssd1306_WriteString("", Font_7x10, White);
   ssd1306_UpdateScreen();
 
+  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1); // start PWM on PB4
 
-  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
+  W5500Init();
+  httpServer_init(TX_BUF, RX_BUF, MAX_HTTPSOCK, socknumlist);
+  reg_httpServer_cbfunc(NVIC_SystemReset, NULL); // remover
+
+  /* Web content registration */
+  reg_httpServer_webContent((uint8_t *)"index.html", (uint8_t *)index_page);
+
+  // verificar a necessidade disso
+  //HAL_GPIO_WritePin(W5500_CS_GPIO_Port, W5500_CS_Pin, GPIO_PIN_RESET);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -132,17 +305,19 @@ int main(void)
   char str[10];
   float widthFactor = 1.28;
   while (1) {
+    for(int i = 0; i < MAX_HTTPSOCK; i++) httpServer_run(i); // HTTP Server handler
+
     if (prevEncoderValue != encoderValue) {
       htim3.Instance->CCR1 = (MAX_VALUE - encoderValue);
 
       // draw a progress bar indicating the value
-      ssd1306_FillRectangle(0, 12, SSD1306_WIDTH, 20, Black);
-      ssd1306_FillRectangle(0, 12, encoderValue * widthFactor, 20, White);
+      ssd1306_FillRectangle(0, 23, SSD1306_WIDTH, 30, Black);
+      ssd1306_FillRectangle(0, 23, encoderValue * widthFactor, 30, White);
 
       sprintf(str, "%-5d", encoderValue);
-      ssd1306_SetCursor(0, 36);
+      ssd1306_SetCursor(0, 35);
       ssd1306_WriteString(str, Font_7x10, White);
-      ssd1306_SetCursor(60, 36);
+      ssd1306_SetCursor(60, 35);
       if (encoderValue > prevEncoderValue) {
         ssd1306_WriteString(">", Font_7x10, White);
       } else if (encoderValue < prevEncoderValue) {
@@ -231,6 +406,44 @@ static void MX_I2C1_Init(void)
   /* USER CODE BEGIN I2C1_Init 2 */
 
   /* USER CODE END I2C1_Init 2 */
+
+}
+
+/**
+  * @brief SPI1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_SPI1_Init(void)
+{
+
+  /* USER CODE BEGIN SPI1_Init 0 */
+
+  /* USER CODE END SPI1_Init 0 */
+
+  /* USER CODE BEGIN SPI1_Init 1 */
+
+  /* USER CODE END SPI1_Init 1 */
+  /* SPI1 parameter configuration*/
+  hspi1.Instance = SPI1;
+  hspi1.Init.Mode = SPI_MODE_MASTER;
+  hspi1.Init.Direction = SPI_DIRECTION_2LINES;
+  hspi1.Init.DataSize = SPI_DATASIZE_8BIT;
+  hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
+  hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
+  hspi1.Init.NSS = SPI_NSS_SOFT;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4;
+  hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
+  hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
+  hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
+  hspi1.Init.CRCPolynomial = 10;
+  if (HAL_SPI_Init(&hspi1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN SPI1_Init 2 */
+
+  /* USER CODE END SPI1_Init 2 */
 
 }
 
@@ -347,11 +560,21 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(W5500_CS_GPIO_Port, W5500_CS_Pin, GPIO_PIN_RESET);
+
   /*Configure GPIO pin : PC13 */
   GPIO_InitStruct.Pin = GPIO_PIN_13;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : W5500_CS_Pin */
+  GPIO_InitStruct.Pin = W5500_CS_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(W5500_CS_GPIO_Port, &GPIO_InitStruct);
 
 }
 
