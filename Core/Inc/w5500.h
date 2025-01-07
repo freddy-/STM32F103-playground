@@ -1676,7 +1676,11 @@ void     WIZCHIP_WRITE_BUF(uint32_t AddrSel, uint8_t* pBuf, uint16_t len);
  * @sa setSn_CR()
  */
 #define getSn_CR(sn) \
-		WIZCHIP_READ(Sn_CR(sn))
+    WIZCHIP_READ(Sn_CR(sn))
+
+//    ((uint8_t)WIZCHIP_READ(Sn_CR(sn)) & 0xFF)
+// WIZCHIP_READ(Sn_CR(sn))
+// https://github.com/Wiznet/ioLibrary_Driver/issues/94
 
 /**
  * @ingroup Socket_register_access_function

@@ -19,10 +19,15 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "usb_device.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "stdio.h"
+#include "malloc.h"
+#include <stdlib.h>
+
+#include "usbd_cdc_if.h"
 
 /* SSD1306 */
 #include "ssd1306.h"
@@ -99,11 +104,19 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
 }
 /* ROTARY ENCODER */
 
+extern char *sbrk(int i);
+
+extern char _end;
+extern char _sdata;
+extern char _estack;
+extern char _Min_Stack_Size;
+
+static char *ramend = &_estack;
 
 /* W5500 */
 #define DHCP_SOCKET     0
 #define DNS_SOCKET      1
-#define MAX_HTTPSOCK    6
+#define MAX_HTTPSOCK    1
 #define index_page "<!DOCTYPE html>"\
   "<html>"\
     "<head>"\
@@ -137,6 +150,8 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
       "<a class=\"button button-off\" href=\"/ledoff.html\">OFF</a>"\
     "</body>"\
   "</html>"
+
+extern uint8_t *__sbrk_heap_end;
 
 uint8_t socknumlist[] = {2, 3, 4, 5, 6, 7};
 uint8_t RX_BUF[1024];
@@ -186,6 +201,7 @@ uint8_t dhcp_buffer[1024];
 uint8_t dns_buffer[1024];
 
 void W5500Init() {
+
     // Register W5500 callbacks
     reg_wizchip_cs_cbfunc(wizchipSelect, wizchipUnselect);
     reg_wizchip_spi_cbfunc(wizchipReadByte, wizchipWriteByte);
@@ -217,6 +233,8 @@ void W5500Init() {
         ssd1306_WriteString("...", Font_7x10, White);
       }
       ssd1306_UpdateScreen();
+
+      printf("Waiting IP...\n");
       DHCP_run();
       HAL_Delay(500);
       ctr--;
@@ -240,14 +258,47 @@ void W5500Init() {
     ssd1306_UpdateScreen();
 
     wizchip_setnetinfo(&net_info);
+
+    // set the TCP Timeout, needed when the connection is lost/cut in the middle of a request
+    wiz_NetTimeout timeout;
+    wizchip_gettimeout(&timeout);
+    printf("OLD TIMEOUT: count: %d, time_100us: %d \n", timeout.retry_cnt, timeout.time_100us);
+
+    timeout.retry_cnt = 4;
+    timeout.time_100us = 1000;
+    wizchip_settimeout(&timeout);
+
+    wizchip_gettimeout(&timeout);
+    printf("NEW TIMEOUT: count: %d, time_100us: %d \n", timeout.retry_cnt, timeout.time_100us);
 }
 
-void led_on() {
+void led_on(uint8_t **content, uint32_t *content_len) {
+  uint8_t *mem = malloc(10);
+  strcpy((char*)mem, "LED ON");
+
+  *content = mem;
+  *content_len = strlen((char*)mem);
+
   HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
 }
 
-void led_off() {
+void led_off(uint8_t **content, uint32_t *content_len) {
+  uint8_t *mem = malloc(10);
+  strcpy((char*)mem, "LED OFF");
+
+  *content = mem;
+  *content_len = strlen((char*)mem);
   HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);
+}
+
+void get_encoder_value(uint8_t **content, uint32_t *content_len) {
+  char str[10];
+  sprintf(str, "%d", encoderValue);
+
+  uint8_t *mem = malloc(10);
+  strcpy((char*)mem, str);
+  *content = mem;
+  *content_len = strlen((char*)mem);
 }
 /* W5500 */
 
@@ -285,9 +336,12 @@ int main(void)
   MX_TIM2_Init();
   MX_TIM3_Init();
   MX_SPI1_Init();
+  MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_Encoder_Start_IT(&htim2, TIM_CHANNEL_ALL);
   ssd1306_Init();
+
+  printf("STM32 cdc printf\n");
 
   ssd1306_SetCursor(0, 0);
   ssd1306_WriteString("STM32 OLED Display", Font_7x10, White);
@@ -307,6 +361,10 @@ int main(void)
   /* Register function to respond to API call */
   reg_httpServer_api((uint8_t *)"api/led/on", led_on);
   reg_httpServer_api((uint8_t *)"api/led/off", led_off);
+
+  // TODO criar uma função que retorne o valor do encoder
+  reg_httpServer_api((uint8_t *)"api/encoder", get_encoder_value);
+
 
   /* USER CODE END 2 */
 
@@ -336,9 +394,33 @@ int main(void)
         ssd1306_WriteString("-", Font_7x10, White);
       }
       prevEncoderValue = encoderValue;
+
+      ssd1306_UpdateScreen();
     }
 
-    ssd1306_UpdateScreen();
+
+    if (HAL_GetTick() % 1000 == 0) {
+      struct mallinfo mi = mallinfo();
+      char *heapend = (char*)sbrk(0);
+      char * stack_ptr = (char*)__get_MSP();
+
+      char *minSP = (char*)(ramend - &_Min_Stack_Size);
+
+      int free = ((stack_ptr < minSP) ? stack_ptr : minSP) - heapend + mi.fordblks;
+
+      ssd1306_SetCursor(0, 45);
+      sprintf(str, "%d", free);
+      ssd1306_WriteString(str, Font_7x10, White);
+
+      ssd1306_UpdateScreen();
+    }
+
+
+    //ssd1306_SetCursor(0, 45);
+    //sprintf(str, "%d", HAL_GetTick() % 1000);
+    //ssd1306_WriteString(str, Font_7x10, White);
+
+
     //counter++;
     /* USER CODE END WHILE */
 
@@ -355,6 +437,7 @@ void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+  RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
@@ -380,6 +463,12 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
   if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USB;
+  PeriphClkInit.UsbClockSelection = RCC_USBCLKSOURCE_PLL_DIV1_5;
+  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
   {
     Error_Handler();
   }
@@ -442,7 +531,7 @@ static void MX_SPI1_Init(void)
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_4;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_16;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -593,7 +682,10 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-
+// https://github.com/alexeykosinov/Redirect-printf-to-USB-VCP-on-STM32H7-MCU
+int _write(int file, char *ptr, int len) {
+    CDC_Transmit_FS((uint8_t*) ptr, len); return len;
+}
 /* USER CODE END 4 */
 
 /**

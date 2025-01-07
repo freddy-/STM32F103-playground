@@ -85,7 +85,7 @@ typedef struct _httpServer_webContent
 	uint8_t	*	content_name;
 	uint32_t	content_len;
 	uint8_t * 	content;
-	void(*function)(void);
+	void(*function)(uint8_t **, uint32_t *);
 
 }httpServer_webContent;
 
@@ -95,7 +95,7 @@ void reg_httpServer_cbfunc(void(*mcu_reset)(void), void(*wdt_reset)(void));
 void httpServer_run(uint8_t seqnum);
 
 void reg_httpServer_webContent(uint8_t * content_name, uint8_t * content);
-void reg_httpServer_api(uint8_t * content_name, void(*fn)(void));
+void reg_httpServer_api(uint8_t * content_name, void(*fn)(uint8_t **, uint32_t *));
 uint8_t find_userReg_webContent(uint8_t * content_name, uint16_t * content_num, uint32_t * file_len);
 uint8_t find_userReg_api(uint8_t * content_name, uint16_t * content_num, uint32_t * file_len);
 uint16_t read_userReg_webContent(uint16_t content_num, uint8_t * buf, uint32_t offset, uint16_t size);
