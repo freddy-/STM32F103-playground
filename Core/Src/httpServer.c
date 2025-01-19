@@ -131,19 +131,10 @@ void httpServer_run(uint8_t seqnum)
 	// Get the H/W socket number
 	s = getHTTPSocketNum(seqnum);
 
-	uint8_t snSr = getSn_SR(s);
-	static uint8_t prevSnSr = 0;
-
-	if (snSr != prevSnSr) {
-	  prevSnSr = snSr;
-	  printf("%d - getSn_SR: 0x%X \n", s, snSr);
-	}
-
 	/* HTTP Service Start */
-	switch(snSr)
+	switch(getSn_SR(s))
 	{
 		case SOCK_ESTABLISHED:
-      printf("%d - enter SOCK_ESTABLISHED\n", s);
 			// Interrupt clear
 			if(getSn_IR(s) & Sn_IR_CON)
 			{
@@ -155,7 +146,6 @@ void httpServer_run(uint8_t seqnum)
 			{
 
 				case STATE_HTTP_IDLE :
-				  printf("%d - enter STATE_HTTP_IDLE\n", s);
 					if ((len = getSn_RX_RSR(s)) > 0)
 					{
 						if (len > DATA_BUF_SIZE) len = DATA_BUF_SIZE;
@@ -193,11 +183,9 @@ void httpServer_run(uint8_t seqnum)
 						if(HTTPSock_Status[seqnum].file_len > 0) HTTPSock_Status[seqnum].sock_status = STATE_HTTP_RES_INPROC;
 						else HTTPSock_Status[seqnum].sock_status = STATE_HTTP_RES_DONE; // Send the 'HTTP response' end
 					}
-          printf("%d - exit STATE_HTTP_IDLE\n", s);
 					break;
 
 				case STATE_HTTP_RES_INPROC :
-         printf("%d - enter STATE_HTTP_RES_INPROC\n", s);
 					/* Repeat: Send the remain parts of HTTP responses */
 #ifdef _HTTPSERVER_DEBUG_
 					printf("> HTTPSocket[%d] : [State] STATE_HTTP_RES_INPROC\r\n", s);
@@ -206,11 +194,9 @@ void httpServer_run(uint8_t seqnum)
 					send_http_response_body(s, 0, http_response, 0, 0);
 
 					if(HTTPSock_Status[seqnum].file_len == 0) HTTPSock_Status[seqnum].sock_status = STATE_HTTP_RES_DONE;
-          printf("%d - exit STATE_HTTP_RES_INPROC\n", s);
 					break;
 
 				case STATE_HTTP_RES_DONE :
-          printf("%d - enter STATE_HTTP_RES_DONE\n", s);
 #ifdef _HTTPSERVER_DEBUG_
 					printf("> HTTPSocket[%d] : [State] STATE_HTTP_RES_DONE\r\n", s);
 #endif
@@ -227,17 +213,14 @@ void httpServer_run(uint8_t seqnum)
 					HTTPServer_WDT_Reset();
 #endif
 					http_disconnect(s);
-          printf("%d - exit STATE_HTTP_RES_DONE\n", s);
 					break;
 
 				default :
 					break;
 			}
-      printf("%d - exit SOCK_ESTABLISHED\n", s);
 			break;
 
 		case SOCK_CLOSE_WAIT:
-      printf("%d - enter SOCK_CLOSE_WAIT\n", s);
 #ifdef _HTTPSERVER_DEBUG_
 		printf("> HTTPSocket[%d] : ClOSE_WAIT\r\n", s);	// if a peer requests to close the current connection
 #endif
@@ -249,11 +232,9 @@ void httpServer_run(uint8_t seqnum)
       HTTPSock_Status[seqnum].sock_status = STATE_HTTP_IDLE;
 
       disconnect(s);
-      printf("%d - exit SOCK_CLOSE_WAIT\n", s);
 			break;
 
 		case SOCK_CLOSED:
-      printf("%d - enter SOCK_CLOSED\n", s);
 #ifdef _HTTPSERVER_DEBUG_
 			printf("> HTTPSocket[%d] : CLOSED\r\n", s);
 #endif
@@ -263,13 +244,10 @@ void httpServer_run(uint8_t seqnum)
 				printf("> HTTPSocket[%d] : OPEN\r\n", s);
 #endif
 			}
-      printf("%d - exit SOCK_CLOSED\n", s);
 			break;
 
 		case SOCK_INIT:
-      printf("%d - enter SOCK_INIT\n", s);
 			listen(s);
-      printf("%d - exit SOCK_INIT\n", s);
 			break;
 
 		case SOCK_LISTEN:
