@@ -68,10 +68,12 @@ void Error_Handler(void);
 #define W5500_CS_GPIO_Port GPIOA
 #define LED3_PWM_Pin GPIO_PIN_0
 #define LED3_PWM_GPIO_Port GPIOB
+#define LED2_PWM_Pin GPIO_PIN_1
+#define LED2_PWM_GPIO_Port GPIOB
 #define LED1_PWM_Pin GPIO_PIN_4
 #define LED1_PWM_GPIO_Port GPIOB
-#define LED2_PWM_Pin GPIO_PIN_5
-#define LED2_PWM_GPIO_Port GPIOB
+#define ENC_BTN_Pin GPIO_PIN_5
+#define ENC_BTN_GPIO_Port GPIOB
 /* USER CODE BEGIN Private defines */
 
 /* USER CODE END Private defines */

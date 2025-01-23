@@ -342,11 +342,24 @@ int main(void)
   MX_USB_DEVICE_Init();
   MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
-  HAL_ADCEx_Calibration_Start(&hadc1);
-  HAL_TIM_Encoder_Start_IT(&htim2, TIM_CHANNEL_ALL);
-  ssd1306_Init();
 
-  printf("STM32 cdc printf\n");
+  // calibrate ADC
+  HAL_ADCEx_Calibration_Start(&hadc1);
+
+  // start timer for the encoder
+  HAL_TIM_Encoder_Start_IT(&htim2, TIM_CHANNEL_ALL);
+
+  // start timer for RGB LED PWM
+  // errata 2.3.8, cannot use I2C1 and TIM3 CH2 at the same time
+  if (HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1) != HAL_OK) printf("TIM CH1 START FAIL\n"); // start PWM on PB4
+  if (HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_3) != HAL_OK) printf("TIM CH3 START FAIL\n"); // start PWM on PB0
+  if (HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4) != HAL_OK) printf("TIM CH4 START FAIL\n"); // start PWM on PB5
+  htim3.Instance->CCR1 = MAX_VALUE;         // set pwm to max (led off)
+  htim3.Instance->CCR3 = MAX_VALUE;         // set pwm to max (led off)
+  htim3.Instance->CCR4 = MAX_VALUE;         // set pwm to max (led off)
+
+  // init I2C oled display
+  ssd1306_Init();
 
   ssd1306_SetCursor(0, 0);
   ssd1306_WriteString("STM32 OLED Display", Font_7x10, White);
@@ -354,12 +367,11 @@ int main(void)
   ssd1306_WriteString("", Font_7x10, White);
   ssd1306_UpdateScreen();
 
-  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1); // start PWM on PB4
-  htim3.Instance->CCR1 = MAX_VALUE;         // set pwm to max (led off)
+  printf("STM32 cdc printf\n");
 
+  // init wiznet module
   W5500Init();
   httpServer_init(TX_BUF, RX_BUF, MAX_HTTPSOCK, socknumlist);
-  //reg_httpServer_cbfunc(NVIC_SystemReset, NULL); // remover
 
   /* Web content registration */
   reg_httpServer_webContent((uint8_t *)"index.html", (uint8_t *)index_page);
@@ -367,10 +379,7 @@ int main(void)
   /* Register function to respond to API call */
   reg_httpServer_api((uint8_t *)"api/led/on", led_on);
   reg_httpServer_api((uint8_t *)"api/led/off", led_off);
-
-  // TODO criar uma função que retorne o valor do encoder
   reg_httpServer_api((uint8_t *)"api/encoder", get_encoder_value);
-
 
   /* USER CODE END 2 */
 
@@ -379,10 +388,14 @@ int main(void)
   char str[10];
   float widthFactor = 1.28;
   while (1) {
+    HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, HAL_GPIO_ReadPin(ENC_BTN_GPIO_Port, ENC_BTN_Pin));
+
     for(int i = 0; i < MAX_HTTPSOCK; i++) httpServer_run(i); // HTTP Server handler
 
     if (prevEncoderValue != encoderValue) {
       htim3.Instance->CCR1 = (MAX_VALUE - encoderValue);
+      htim3.Instance->CCR4 = (MAX_VALUE - encoderValue);
+      htim3.Instance->CCR3 = (MAX_VALUE - encoderValue);
 
       // draw a progress bar indicating the value
       ssd1306_FillRectangle(0, 23, SSD1306_WIDTH, 30, Black);
@@ -407,16 +420,15 @@ int main(void)
 
     // each second
     if (HAL_GetTick() % 1000 == 0) {
-      struct mallinfo mi = mallinfo();
-      char *heapend = (char*)sbrk(0);
-      char * stack_ptr = (char*)__get_MSP();
+      HAL_ADC_Start(&hadc1);
+      HAL_ADC_PollForConversion(&hadc1, 10);
+      uint16_t adcRes = HAL_ADC_GetValue(&hadc1);
 
-      char *minSP = (char*)(ramend - &_Min_Stack_Size);
-
-      int free = ((stack_ptr < minSP) ? stack_ptr : minSP) - heapend + mi.fordblks;
+      // TODO multiplicar o ADC por 0,000805664 (3,3 ÷ (2^12))
+      float temp = adcRes * 0.0805664;
 
       ssd1306_SetCursor(0, 45);
-      sprintf(str, "%d", free);
+      sprintf(str, "%d", (uint16_t)temp);
       ssd1306_WriteString(str, Font_7x10, White);
 
       ssd1306_UpdateScreen();
@@ -516,7 +528,7 @@ static void MX_ADC1_Init(void)
   */
   sConfig.Channel = ADC_CHANNEL_1;
   sConfig.Rank = ADC_REGULAR_RANK_1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_1CYCLE_5;
+  sConfig.SamplingTime = ADC_SAMPLETIME_71CYCLES_5;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -690,11 +702,11 @@ static void MX_TIM3_Init(void)
   {
     Error_Handler();
   }
-  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
+  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_3) != HAL_OK)
   {
     Error_Handler();
   }
-  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_3) != HAL_OK)
+  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_4) != HAL_OK)
   {
     Error_Handler();
   }
@@ -740,6 +752,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(W5500_CS_GPIO_Port, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : ENC_BTN_Pin */
+  GPIO_InitStruct.Pin = ENC_BTN_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(ENC_BTN_GPIO_Port, &GPIO_InitStruct);
+
 }
 
 /* USER CODE BEGIN 4 */
@@ -757,6 +775,7 @@ void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
+  printf("ERROR \n");
 
   /* USER CODE END Error_Handler_Debug */
 }
