@@ -93,9 +93,10 @@ static void MX_ADC1_Init(void);
 #define TICKS_PER_STEP 4 // each step of the encoder sends 4 events
 
 int16_t encoderValue = 0;
-int16_t prevEncoderValue = -1;
+int16_t prevEncoderValue = 0;
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
   encoderValue = (int16_t)__HAL_TIM_GET_COUNTER(htim) / TICKS_PER_STEP;
+  /*
   if (encoderValue < 0) {
     encoderValue = 0;
     __HAL_TIM_SET_COUNTER(htim, encoderValue);
@@ -104,8 +105,28 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
     encoderValue = MAX_VALUE;
     __HAL_TIM_SET_COUNTER(htim, encoderValue * TICKS_PER_STEP);
   }
+  */
 }
 /* ROTARY ENCODER */
+
+/* BUTTON */
+uint8_t buttonState = 0;
+uint32_t lastButtonPress = 0;
+void HAL_GPIO_EXTI_Callback(uint16_t pin) {
+  uint32_t tick = HAL_GetTick();
+  if (tick - lastButtonPress > 200) {
+    lastButtonPress = tick;
+    buttonState = 1;
+  }
+}
+
+uint8_t getButtonState() {
+  // get and reset button state
+  uint8_t actualState = buttonState;
+  buttonState = 0;
+  return actualState;
+}
+/* BUTTON */
 
 extern char *sbrk(int i);
 
@@ -387,31 +408,73 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   char str[10];
   float widthFactor = 1.28;
+  uint8_t rgbLedSelected = 0;
+  int8_t redValue = 0;
+  int8_t greenValue = 0;
+  int8_t blueValue = 0;
+  uint8_t selectedValue = 0;
+  uint8_t forceUpdate = 1;
   while (1) {
-    HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, HAL_GPIO_ReadPin(ENC_BTN_GPIO_Port, ENC_BTN_Pin));
+
+    if (getButtonState()) {
+      if (++rgbLedSelected > 2) rgbLedSelected = 0;
+      forceUpdate = 1;
+      //HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
+    }
 
     for(int i = 0; i < MAX_HTTPSOCK; i++) httpServer_run(i); // HTTP Server handler
 
-    if (prevEncoderValue != encoderValue) {
-      htim3.Instance->CCR1 = (MAX_VALUE - encoderValue);
-      htim3.Instance->CCR4 = (MAX_VALUE - encoderValue);
-      htim3.Instance->CCR3 = (MAX_VALUE - encoderValue);
+    if (prevEncoderValue != encoderValue || forceUpdate) {
+      forceUpdate = 0;
+      printf("prev: %d  curr: %d\n", prevEncoderValue, encoderValue);
+
+      switch (rgbLedSelected) {
+        case 0: // green
+          greenValue = greenValue + (encoderValue - prevEncoderValue);
+          if (greenValue > MAX_VALUE) greenValue = MAX_VALUE;
+          if (greenValue < 0) greenValue = 0;
+          htim3.Instance->CCR1 = MAX_VALUE - greenValue;
+          selectedValue = greenValue;
+          break;
+
+        case 1: // red
+          redValue = redValue + (encoderValue - prevEncoderValue);
+          if (redValue > MAX_VALUE) redValue = MAX_VALUE;
+          if (redValue < 0) redValue = 0;
+          htim3.Instance->CCR4 = MAX_VALUE - redValue;
+          selectedValue = redValue;
+          break;
+
+        case 2: // blue
+          blueValue = blueValue + (encoderValue - prevEncoderValue);
+          if (blueValue > MAX_VALUE) blueValue = MAX_VALUE;
+          if (blueValue < 0) blueValue = 0;
+          htim3.Instance->CCR3 = MAX_VALUE - blueValue;
+          selectedValue = blueValue;
+          break;
+      }
 
       // draw a progress bar indicating the value
       ssd1306_FillRectangle(0, 23, SSD1306_WIDTH, 30, Black);
-      ssd1306_FillRectangle(0, 23, encoderValue * widthFactor, 30, White);
+      ssd1306_FillRectangle(0, 23, selectedValue * widthFactor, 30, White);
 
-      sprintf(str, "%-5d", encoderValue);
+      sprintf(str, "%-5d", selectedValue);
       ssd1306_SetCursor(0, 35);
       ssd1306_WriteString(str, Font_7x10, White);
+
       ssd1306_SetCursor(60, 35);
-      if (encoderValue > prevEncoderValue) {
-        ssd1306_WriteString(">", Font_7x10, White);
-      } else if (encoderValue < prevEncoderValue) {
-        ssd1306_WriteString("<", Font_7x10, White);
-      } else {
-        ssd1306_WriteString("-", Font_7x10, White);
+      switch(rgbLedSelected) {
+        case 0:
+          ssd1306_WriteString("G", Font_7x10, White);
+          break;
+        case 1:
+          ssd1306_WriteString("R", Font_7x10, White);
+          break;
+        case 2:
+          ssd1306_WriteString("B", Font_7x10, White);
+          break;
       }
+
       prevEncoderValue = encoderValue;
 
       ssd1306_UpdateScreen();
@@ -754,9 +817,13 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin : ENC_BTN_Pin */
   GPIO_InitStruct.Pin = ENC_BTN_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(ENC_BTN_GPIO_Port, &GPIO_InitStruct);
+
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 1, 0);
+  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
 
 }
 

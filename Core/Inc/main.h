@@ -74,6 +74,7 @@ void Error_Handler(void);
 #define LED1_PWM_GPIO_Port GPIOB
 #define ENC_BTN_Pin GPIO_PIN_5
 #define ENC_BTN_GPIO_Port GPIOB
+#define ENC_BTN_EXTI_IRQn EXTI9_5_IRQn
 /* USER CODE BEGIN Private defines */
 
 /* USER CODE END Private defines */
