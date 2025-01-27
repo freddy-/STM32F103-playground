@@ -35,12 +35,10 @@
 /* SSD1306 */
 
 /* W5500 */
+#include "ethernet_module.h"
 #include <string.h>
 #include <stdbool.h>
 #include <stdio.h>
-#include "socket.h"
-#include "dhcp.h"
-#include "httpServer.h"
 /* W5500 */
 
 /* USER CODE END Includes */
@@ -128,203 +126,6 @@ uint8_t getButtonState() {
 }
 /* BUTTON */
 
-extern char *sbrk(int i);
-
-extern char _end;
-extern char _sdata;
-extern char _estack;
-extern char _Min_Stack_Size;
-
-static char *ramend = &_estack;
-
-/* W5500 */
-#define DHCP_SOCKET     0
-#define DNS_SOCKET      1
-#define MAX_HTTPSOCK    6
-#define index_page "<!DOCTYPE html>"\
-  "<html>"\
-    "<head>"\
-      "<title>W5500-STM32 Web Server</title>"\
-      "<meta http-equiv='Content-Type' content='text/html; charset=utf-8'>"\
-      "<link href=\"data:image/x-icon;base64,A\" rel=\"icon\" type=\"image/x-icon\">"\
-      "<style>"\
-        "html {display: inline-block; margin: 0px auto; text-align: center;}"\
-        "body{margin-top: 50px;}"\
-        ".button {display: block;"\
-          "width: 70px;"\
-          "background-color: #008000;"\
-          "border: none;"\
-          "color: white;"\
-          "padding: 14px 28px;"\
-          "text-decoration: none;"\
-          "font-size: 24px;"\
-          "margin: 0px auto 36px;"\
-          "border-radius: 5px;}"\
-        ".button-on {background-color: #008000;}"\
-        ".button-on:active{background-color: #008000;}"\
-        ".button-off {background-color: #808080;}"\
-        ".button-off:active {background-color: #808080;}"\
-        "p {font-size: 20px;color: #808080;margin-bottom: 20px;}"\
-      "</style>"\
-    "</head>"\
-    "<body>"\
-      "<h1>STM32 - W5500</h1>"\
-      "<p>Control the light via Ethernet</p>"\
-      "<a class=\"button button-on\" href=\"/ledon.html\">ON</a>"\
-      "<a class=\"button button-off\" href=\"/ledoff.html\">OFF</a>"\
-    "</body>"\
-  "</html>"
-
-extern uint8_t *__sbrk_heap_end;
-
-uint8_t socknumlist[] = {2, 3, 4, 5, 6, 7};
-uint8_t RX_BUF[1024];
-uint8_t TX_BUF[1024];
-wiz_NetInfo net_info = {
-    .mac  = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED },
-    .dhcp = NETINFO_DHCP
-};
-
-void wizchipSelect(void) {
-    HAL_GPIO_WritePin(W5500_CS_GPIO_Port, W5500_CS_Pin, GPIO_PIN_RESET);
-}
-
-void wizchipUnselect(void) {
-    HAL_GPIO_WritePin(W5500_CS_GPIO_Port, W5500_CS_Pin, GPIO_PIN_SET);
-}
-
-void wizchipReadBurst(uint8_t* buff, uint16_t len) {
-    HAL_SPI_Receive(&hspi1, buff, len, HAL_MAX_DELAY);
-}
-
-void wizchipWriteBurst(uint8_t* buff, uint16_t len) {
-    HAL_SPI_Transmit(&hspi1, buff, len, HAL_MAX_DELAY);
-}
-
-uint8_t wizchipReadByte(void) {
-    uint8_t byte;
-    wizchipReadBurst(&byte, sizeof(byte));
-    return byte;
-}
-
-void wizchipWriteByte(uint8_t byte) {
-    wizchipWriteBurst(&byte, sizeof(byte));
-}
-
-volatile bool ip_assigned = false;
-
-void Callback_IPAssigned(void) {
-    ip_assigned = true;
-}
-
-void Callback_IPConflict(void) {
-    ip_assigned = false;
-}
-
-uint8_t dhcp_buffer[1024];
-uint8_t dns_buffer[1024];
-
-void W5500Init() {
-
-    // Register W5500 callbacks
-    reg_wizchip_cs_cbfunc(wizchipSelect, wizchipUnselect);
-    reg_wizchip_spi_cbfunc(wizchipReadByte, wizchipWriteByte);
-    reg_wizchip_spiburst_cbfunc(wizchipReadBurst, wizchipWriteBurst);
-
-    uint8_t rx_tx_buff_sizes[] = {2, 2, 2, 2, 2, 2, 2, 2};
-    wizchip_init(rx_tx_buff_sizes, rx_tx_buff_sizes);
-
-    // set MAC address before using DHCP
-    setSHAR(net_info.mac);
-    DHCP_init(DHCP_SOCKET, dhcp_buffer);
-
-    reg_dhcp_cbfunc(
-        Callback_IPAssigned,
-        Callback_IPAssigned,
-        Callback_IPConflict
-    );
-
-    ssd1306_SetCursor(0, 12);
-    ssd1306_WriteString("Waiting IP", Font_7x10, White);
-    ssd1306_UpdateScreen();
-
-    uint32_t ctr = 10000;
-    while((!ip_assigned) && (ctr > 0)) {
-      ssd1306_SetCursor(72, 12);
-      if (ctr % 2 == 0) {
-        ssd1306_WriteString("   ", Font_7x10, White);
-      } else {
-        ssd1306_WriteString("...", Font_7x10, White);
-      }
-      ssd1306_UpdateScreen();
-
-      printf("Waiting IP...\n");
-      DHCP_run();
-      HAL_Delay(500);
-      ctr--;
-    }
-
-    if(!ip_assigned) {
-      ssd1306_SetCursor(0, 12);
-      ssd1306_WriteString("IP not assigned", Font_7x10, White);
-      ssd1306_UpdateScreen();
-      return;
-    }
-
-    getIPfromDHCP(net_info.ip);
-    getGWfromDHCP(net_info.gw);
-    getSNfromDHCP(net_info.sn);
-
-    char ipStr[30];
-    sprintf(ipStr, "IP: %d.%d.%d.%d", net_info.ip[0], net_info.ip[1], net_info.ip[2], net_info.ip[3]);
-    ssd1306_SetCursor(0, 12);
-    ssd1306_WriteString(ipStr, Font_7x10, White);
-    ssd1306_UpdateScreen();
-
-    wizchip_setnetinfo(&net_info);
-
-    // set the TCP Timeout, needed when the connection is lost/cut in the middle of a request
-    wiz_NetTimeout timeout;
-    wizchip_gettimeout(&timeout);
-    printf("OLD TIMEOUT: count: %d, time_100us: %d \n", timeout.retry_cnt, timeout.time_100us);
-
-    timeout.retry_cnt = 4;
-    timeout.time_100us = 1000;
-    wizchip_settimeout(&timeout);
-
-    wizchip_gettimeout(&timeout);
-    printf("NEW TIMEOUT: count: %d, time_100us: %d \n", timeout.retry_cnt, timeout.time_100us);
-}
-
-void led_on(uint8_t **content, uint32_t *content_len) {
-  uint8_t *mem = malloc(10);
-  strcpy((char*)mem, "LED ON");
-
-  *content = mem;
-  *content_len = strlen((char*)mem);
-
-  HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_RESET);
-}
-
-void led_off(uint8_t **content, uint32_t *content_len) {
-  uint8_t *mem = malloc(10);
-  strcpy((char*)mem, "LED OFF");
-
-  *content = mem;
-  *content_len = strlen((char*)mem);
-  HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin, GPIO_PIN_SET);
-}
-
-void get_encoder_value(uint8_t **content, uint32_t *content_len) {
-  char str[10];
-  sprintf(str, "%d", encoderValue);
-
-  uint8_t *mem = malloc(10);
-  strcpy((char*)mem, str);
-  *content = mem;
-  *content_len = strlen((char*)mem);
-}
-/* W5500 */
 
 /* USER CODE END 0 */
 
@@ -360,8 +161,8 @@ int main(void)
   MX_TIM2_Init();
   MX_TIM3_Init();
   MX_SPI1_Init();
-  MX_USB_DEVICE_Init();
   MX_ADC1_Init();
+  MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 2 */
 
   // calibrate ADC
@@ -392,15 +193,6 @@ int main(void)
 
   // init wiznet module
   W5500Init();
-  httpServer_init(TX_BUF, RX_BUF, MAX_HTTPSOCK, socknumlist);
-
-  /* Web content registration */
-  reg_httpServer_webContent((uint8_t *)"index.html", (uint8_t *)index_page);
-
-  /* Register function to respond to API call */
-  reg_httpServer_api((uint8_t *)"api/led/on", led_on);
-  reg_httpServer_api((uint8_t *)"api/led/off", led_off);
-  reg_httpServer_api((uint8_t *)"api/encoder", get_encoder_value);
 
   /* USER CODE END 2 */
 
@@ -414,7 +206,9 @@ int main(void)
   int8_t blueValue = 0;
   uint8_t selectedValue = 0;
   uint8_t forceUpdate = 1;
+
   while (1) {
+    handleHtpServer();
 
     if (getButtonState()) {
       if (++rgbLedSelected > 2) rgbLedSelected = 0;
@@ -422,7 +216,6 @@ int main(void)
       //HAL_GPIO_TogglePin(LED_GPIO_Port, LED_Pin);
     }
 
-    for(int i = 0; i < MAX_HTTPSOCK; i++) httpServer_run(i); // HTTP Server handler
 
     if (prevEncoderValue != encoderValue || forceUpdate) {
       forceUpdate = 0;
@@ -465,13 +258,13 @@ int main(void)
       ssd1306_SetCursor(60, 35);
       switch(rgbLedSelected) {
         case 0:
-          ssd1306_WriteString("G", Font_7x10, White);
+          ssd1306_WriteString("Green", Font_7x10, White);
           break;
         case 1:
-          ssd1306_WriteString("R", Font_7x10, White);
+          ssd1306_WriteString("Red  ", Font_7x10, White);
           break;
         case 2:
-          ssd1306_WriteString("B", Font_7x10, White);
+          ssd1306_WriteString("Blue ", Font_7x10, White);
           break;
       }
 
