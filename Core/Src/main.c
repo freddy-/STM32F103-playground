@@ -27,6 +27,8 @@
 #include "malloc.h"
 #include <stdlib.h>
 
+#include "encoder.h"
+
 #include "usbd_cdc_if.h"
 
 /* SSD1306 */
@@ -50,6 +52,9 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+
+#define MAX_VALUE      100
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -85,27 +90,6 @@ static void MX_ADC1_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
-/* ROTARY ENCODER */
-#define MAX_VALUE      100
-#define TICKS_PER_STEP 4 // each step of the encoder sends 4 events
-
-int16_t encoderValue = 0;
-int16_t prevEncoderValue = 0;
-void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim) {
-  encoderValue = (int16_t)__HAL_TIM_GET_COUNTER(htim) / TICKS_PER_STEP;
-  /*
-  if (encoderValue < 0) {
-    encoderValue = 0;
-    __HAL_TIM_SET_COUNTER(htim, encoderValue);
-  }
-  if (encoderValue >= MAX_VALUE) {
-    encoderValue = MAX_VALUE;
-    __HAL_TIM_SET_COUNTER(htim, encoderValue * TICKS_PER_STEP);
-  }
-  */
-}
-/* ROTARY ENCODER */
 
 /* BUTTON */
 uint8_t buttonState = 0;
@@ -217,13 +201,14 @@ int main(void)
     }
 
 
-    if (prevEncoderValue != encoderValue || forceUpdate) {
+    if (isEncoderChanged() || forceUpdate) {
       forceUpdate = 0;
-      printf("prev: %d  curr: %d\n", prevEncoderValue, encoderValue);
+      uint16_t encoderDiff = getEncoderValueDiff();
+      printf("prev: %d  curr: %d\n", getPrevEncoderValue(), getEncoderValue());
 
       switch (rgbLedSelected) {
         case 0: // green
-          greenValue = greenValue + (encoderValue - prevEncoderValue);
+          greenValue = greenValue + encoderDiff;
           if (greenValue > MAX_VALUE) greenValue = MAX_VALUE;
           if (greenValue < 0) greenValue = 0;
           htim3.Instance->CCR1 = MAX_VALUE - greenValue;
@@ -231,7 +216,7 @@ int main(void)
           break;
 
         case 1: // red
-          redValue = redValue + (encoderValue - prevEncoderValue);
+          redValue = redValue + encoderDiff;
           if (redValue > MAX_VALUE) redValue = MAX_VALUE;
           if (redValue < 0) redValue = 0;
           htim3.Instance->CCR4 = MAX_VALUE - redValue;
@@ -239,7 +224,7 @@ int main(void)
           break;
 
         case 2: // blue
-          blueValue = blueValue + (encoderValue - prevEncoderValue);
+          blueValue = blueValue + encoderDiff;
           if (blueValue > MAX_VALUE) blueValue = MAX_VALUE;
           if (blueValue < 0) blueValue = 0;
           htim3.Instance->CCR3 = MAX_VALUE - blueValue;
@@ -267,8 +252,6 @@ int main(void)
           ssd1306_WriteString("Blue ", Font_7x10, White);
           break;
       }
-
-      prevEncoderValue = encoderValue;
 
       ssd1306_UpdateScreen();
     }
